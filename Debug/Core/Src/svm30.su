@@ -1,0 +1,6 @@
+svm30.c:44:13:svm_compensate_rht	16	static
+svm30.c:53:17:sensirion_calc_absolute_humidity	32	static
+svm30.c:91:16:svm_set_humidity	24	static
+svm30.c:107:9:svm_measure_iaq_blocking_read	32	static
+svm30.c:128:9:svm_measure_raw_blocking_read	32	static
+svm30.c:148:9:svm_probe	16	static
