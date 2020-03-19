@@ -1,7 +1,7 @@
 #MicroXplorer Configuration settings - do not modify
 FREERTOS.FootprintOK=true
 FREERTOS.IPParameters=Tasks01,FootprintOK
-FREERTOS.Tasks01=updateTask,0,512,StartUpdateTask,Default,NULL,Dynamic,NULL,NULL;IRListeningTask,0,128,StartIR_Task,Default,NULL,Dynamic,NULL,NULL;displayTask,0,128,StartDisplayTask,Default,NULL,Dynamic,NULL,NULL
+FREERTOS.Tasks01=updateTask,0,512,StartUpdateTask,Default,NULL,Dynamic,NULL,NULL;IRListeningTask,0,128,StartIR_Task,Default,NULL,Dynamic,NULL,NULL;displayTask,0,128,StartDisplayTask,Default,NULL,Dynamic,NULL,NULL;myLogTask,-3,128,StartTaskLogging,Default,NULL,Dynamic,NULL,NULL
 File.Version=6
 I2C2.ClockSpeed=90000
 I2C2.IPParameters=ClockSpeed

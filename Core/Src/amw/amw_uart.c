@@ -80,8 +80,11 @@ int getCmdResponse(unsigned char* uart_reponse)
 		}else{
 			int len = atoi((char *)&header[2]);
 			HAL_UART_Receive(amw_uart, uart_reponse, len, 0xFFFF);
+			printf("awm failed %s\r\n", uart_reponse);
 		}
 
+    }else {
+    	printf("garbage amw %s\r\n", header);
     }
     return -1;
 }

@@ -36,6 +36,7 @@
 #include "stepmotor.h"
 #include "svm30.h"
 #include "sensirion_i2c.h"
+#include "ringbuf.h"
 
 /* USER CODE END Includes */
 
@@ -81,6 +82,7 @@
 #define TOPIC_PUB_INFO "esp/response/collect/device-info"
 
 #define TIMEOUT_SVM		5000
+#define BUFF_SIZE 		256
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -112,6 +114,7 @@ UART_HandleTypeDef huart6;
 osThreadId updateTaskHandle;
 osThreadId IRListeningTaskHandle;
 osThreadId displayTaskHandle;
+osThreadId myLogTaskHandle;
 /* USER CODE BEGIN PV */
 MQTTClient client = DefaultClient;
 Network network;
@@ -139,6 +142,9 @@ uint8_t cap_speed_available = 0;
 uint32_t cap_speed;
 
 uint8_t fan_flag = 0;
+
+uint8_t ring2_buff[BUFF_SIZE];
+RINGBUF RxUart2RingBuff;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -157,14 +163,15 @@ static void MX_USART6_UART_Init(void);
 void StartUpdateTask(void const * argument);
 void StartIR_Task(void const * argument);
 void StartDisplayTask(void const * argument);
+void StartTaskLogging(void const * argument);
 
 /* USER CODE BEGIN PFP */
 PUTCHAR_PROTOTYPE
 {
   /* Place your implementation of fputc here */
   /* e.g. write a character to the EVAL_COM1 and Loop until the end of transmission */
-  HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, 0xFFFF);
-
+  //HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, 0xFFFF);
+	RINGBUF_Put(&RxUart2RingBuff, ch);
   return ch;
 }
 
@@ -540,6 +547,7 @@ int main(void)
   MX_USART6_UART_Init();
   /* USER CODE BEGIN 2 */
   //Slow down after init
+  RINGBUF_Init(&RxUart2RingBuff, ring2_buff, BUFF_SIZE);
   HAL_Delay(100);
 
   night_mode = ST_OFF;
@@ -571,7 +579,6 @@ int main(void)
 	  printf("timeout to probe svm30\r\n");
 
   err = sgp30_iaq_init();
-
 
   HAL_UART_Receive_IT(&huart2, Rx_data, 1);
 
@@ -605,6 +612,10 @@ int main(void)
   /* definition and creation of displayTask */
   osThreadDef(displayTask, StartDisplayTask, osPriorityNormal, 0, 128);
   displayTaskHandle = osThreadCreate(osThread(displayTask), NULL);
+
+  /* definition and creation of myLogTask */
+  osThreadDef(myLogTask, StartTaskLogging, osPriorityIdle, 0, 128);
+  myLogTaskHandle = osThreadCreate(osThread(myLogTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -1249,6 +1260,8 @@ void StartIR_Task(void const * argument)
   for(;;)
   {
 	  i++;
+	  //getSVM30(&sensorSVM30data);
+	  printf("IR task\r\n");
 	  osDelay(100);
   }
   /* USER CODE END StartIR_Task */
@@ -1269,9 +1282,34 @@ void StartDisplayTask(void const * argument)
   for(;;)
   {
 	  i++;
+	  //getSVM30(&sensorSVM30data);
+	  printf("Display task\r\n");
 	  osDelay(100);
   }
   /* USER CODE END StartDisplayTask */
+}
+
+/* USER CODE BEGIN Header_StartTaskLogging */
+/**
+* @brief Function implementing the myLogTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTaskLogging */
+void StartTaskLogging(void const * argument)
+{
+  /* USER CODE BEGIN StartTaskLogging */
+	uint8_t rxchar;
+  /* Infinite loop */
+  for(;;)
+  {
+	  if(RINGBUF_GetFill(&RxUart2RingBuff)){
+	  	RINGBUF_Get(&RxUart2RingBuff, &rxchar);
+	  	HAL_UART_Transmit(&huart2, &rxchar, 1, 0xFFFF);
+	  }
+    //osDelay(1);
+  }
+  /* USER CODE END StartTaskLogging */
 }
 
  /**
