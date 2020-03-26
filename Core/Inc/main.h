@@ -62,6 +62,7 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define B1_Pin GPIO_PIN_13
 #define B1_GPIO_Port GPIOC
+#define B1_EXTI_IRQn EXTI15_10_IRQn
 #define UV_Pin GPIO_PIN_0
 #define UV_GPIO_Port GPIOC
 #define ION_Pin GPIO_PIN_1
@@ -94,6 +95,12 @@ void Error_Handler(void);
 #define TCK_GPIO_Port GPIOA
 #define SWO_Pin GPIO_PIN_3
 #define SWO_GPIO_Port GPIOB
+#define SPEED_BUTTON_Pin GPIO_PIN_6
+#define SPEED_BUTTON_GPIO_Port GPIOB
+#define SPEED_BUTTON_EXTI_IRQn EXTI9_5_IRQn
+#define MODE_BUTTON_Pin GPIO_PIN_7
+#define MODE_BUTTON_GPIO_Port GPIOB
+#define MODE_BUTTON_EXTI_IRQn EXTI9_5_IRQn
 /* USER CODE BEGIN Private defines */
 enum status_t{
 	ST_OFF,
@@ -108,6 +115,13 @@ enum filter_mode_t{
 enum ctrl_mode_t{
 	MANUAL,
 	AUTOMATIC
+};
+
+enum sys_mode_t{
+	AUTO_MODE = 1,
+	FRESH_MODE,
+	INDOOR_MODE,
+	NIGHT_MODE
 };
 
 

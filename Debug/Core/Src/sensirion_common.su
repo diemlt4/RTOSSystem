@@ -1,9 +1,0 @@
-sensirion_common.c:41:9:sensirion_common_generate_crc	24	static
-sensirion_common.c:59:8:sensirion_common_check_crc	16	static
-sensirion_common.c:66:10:sensirion_fill_cmd_send_buf	32	static
-sensirion_common.c:86:9:sensirion_i2c_read_words_as_bytes	96	static
-sensirion_common.c:113:9:sensirion_i2c_read_words	24	static
-sensirion_common.c:129:9:sensirion_i2c_write_cmd	24	static
-sensirion_common.c:136:9:sensirion_i2c_write_cmd_with_args	64	static
-sensirion_common.c:146:9:sensirion_i2c_delayed_read_cmd	32	static
-sensirion_common.c:163:9:sensirion_i2c_read_cmd	32	static

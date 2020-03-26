@@ -36,7 +36,10 @@
 #include "stepmotor.h"
 #include "svm30.h"
 #include "sensirion_i2c.h"
+#include "sm_uart-04l.h"
+#include "tiny-json.h"
 #include "ringbuf.h"
+#include "IRremote.h"
 
 /* USER CODE END Includes */
 
@@ -48,7 +51,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define SSID_WIFI "Samsung"
+#define SSID_WIFI "Samsung1"
 #define PASS_WIFI "123456789"
 
 #define MQTT_MESSAGE                "[{\"name\": \"ERV\", \"id\": \"hethong123\"}]"
@@ -60,6 +63,14 @@
 #define MQTT_PASSWORD               "SvVx1BPwTVqk"
 #define MQTT_HOST                   "m24.cloudmqtt.com"
 #define MQTT_PORT                   14022
+
+// For new app
+#define MQTT_USER_N                 "erdfotqc"
+#define MQTT_PASSWORD_N             "e8HXfhsM8aD6"
+//#define MQTT_HOST_N                   "m16.cloudmqtt.com"
+//#define MQTT_PORT_N                   15044
+#define MQTT_HOST_N                   "broker.hivemq.com"
+#define MQTT_PORT_N                   1883
 
 //** Define MQTT TOPIC cần subcribse từ Broker để giao tiếp vs app **//
 #define TOPIC_DEVICE_ID "esp/request/collect/device-info"
@@ -81,8 +92,35 @@
 #define TOPIC_PUB_CONTROL_STATE  "esp/response/collect/control-state"
 #define TOPIC_PUB_INFO "esp/response/collect/device-info"
 
+// For new mobile app
+#define TOPIC_LOGIN "hungdv39/ap01/server-device/account/login"
+#define TOPIC_CHANGE_PASSWORD "hungdv39/ap01/request/login/change_password"
+// Lấy các chỉ số chất lượng không khí và đi�?u khiển
+#define TOPIC_GET_AIR_QUALITY  "session_01/ap01/request/home/get_air_quality"
+#define TOPIC_GET_CONTROL_STATE "session_01/ap01/request/control/get_state"
+#define TOPIC_REQUEST_CONTROL_MODE "session_01/ap01/request/control/control_state"
+#define TOPIC_REQUEST_ALERT "session_01/ap01/request/alert/alert"
+/** Topic Publish **/
+#define REPONSE_LOGIN "hungdv39/ap01/response/login/login"
+#define REPONSE_CHANGE_PASSWORD "hungdv39/ap01/response/login/change_password"
+#define REPONSE_GET_AIR_QUALITY "session_01/ap01/response/home/get_air_quality"
+#define REPONSE_GET_STATE "session_01/ap01/response/control/get_state"
+#define REPONSE_CONTROL_STATE "session_01/ap01/response/control/control_state"
+#define REPONSE_ALERT "session_01/ap01/response/alert/alert"
+
+#define MESSAGE_LOGIN_SUCCESS  "[{ \"success\" : \"true\", \"session_id\" : \"session_01\", \"info\" : {\"device_id\" : \"air123\", \"name\" : \"May loc 1\", \"position\" : \"Phong khach\"} }]"
+#define MESSAGE_LOGIN_FAIL "{ \"success\" : \"false\", \"error\" : \"Wrong user name or password\"}"
+#define CHANGE_PASSWORD_SUCCESS "{ \"success\" : \"true\" }"
+#define CHANGE_PASSWORD_FAIL "{ \"success\" : \"false\" }"
+char username_Login[] = "hungdv39";
+char password_Login[] = "hungdv39";
+char sessionID[] = "session_01";
+
 #define TIMEOUT_SVM		5000
-#define BUFF_SIZE 		256
+#define BUFF_SIZE 		2048
+
+#define CO2_LEVEL_1		500
+#define CO2_LEVEL_2		700
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -97,7 +135,6 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-I2C_HandleTypeDef hi2c1;
 I2C_HandleTypeDef hi2c2;
 
 SPI_HandleTypeDef hspi2;
@@ -105,6 +142,7 @@ SPI_HandleTypeDef hspi3;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim5;
 
 UART_HandleTypeDef huart1;
@@ -122,20 +160,33 @@ MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
 svm30_t sensorSVM30data;
 
 uint8_t Rx_data[2];
+
 unsigned char send_buf[512];
 unsigned char recv_buf[2048];
 
 char controlState[40];
 char airAQI[50];
+char AQI_newver[100];
+char state_newver[100];
 
 //Iar quality variables
 uint16_t tvoc_ppb = 0, co2_ppm = 0;
 int32_t temperature = 0, humidity = 0;
 uint16_t pm2_5, pm1_0, pm10;
+// IR control variables
+char trans_str[96] = {0,};
+static char *decode_str[] = {"UNUSED", "UNKNOWN", "RC5", "RC6", "NEC", "SONY", "PANASONIC", "JVC", "SAMSUNG", "WHYNTER", "AIWA_RC_T501", "LG", "SANYO", "MITSUBISHI", "DISH", "SHARP", "DENON", "PRONTO"};
+int flagSW, flagSP, flagMode, flagIon;
+// Button Remote
+int state1 = 1, state2 = 1;
+int flagPBT, flagSBT, flagMBT ;
+uint32_t nowb;
+uint32_t future;
+int long_press = 0;
 
 //control mode variables
 uint8_t power = 0, fan_speed = 0, night_mode = 0, filter_mode = 0, control_mode = 0, uv_state = 0, ion_state = 0;
-
+uint8_t sys_mode = 0; // For new app
 uint8_t vanst = 0, preVanst = 0;
 
 uint8_t cap_speed_available = 0;
@@ -143,6 +194,7 @@ uint32_t cap_speed;
 
 uint8_t fan_flag = 0;
 
+uint32_t i = 0, value1 = 1;
 uint8_t ring2_buff[BUFF_SIZE];
 RINGBUF RxUart2RingBuff;
 /* USER CODE END PV */
@@ -151,7 +203,6 @@ RINGBUF RxUart2RingBuff;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
-static void MX_I2C1_Init(void);
 static void MX_I2C2_Init(void);
 static void MX_SPI2_Init(void);
 static void MX_SPI3_Init(void);
@@ -160,6 +211,7 @@ static void MX_TIM2_Init(void);
 static void MX_TIM5_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_USART6_UART_Init(void);
+static void MX_TIM3_Init(void);
 void StartUpdateTask(void const * argument);
 void StartIR_Task(void const * argument);
 void StartDisplayTask(void const * argument);
@@ -183,6 +235,67 @@ void setIONState(uint8_t state);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void fan_run(freq)
+{
+	uint16_t cycle = 0, duty = 0;
+	uint16_t freq_v;
+	freq_v = freq;
+	if(freq_v < 50) freq_v = 50;
+	if(freq_v >275) freq_v = 275;
+	cycle = round(1000000/freq_v);
+	duty = cycle/2;
+	//level_t = 100 - level;
+//	TIM1->ARR = (3636 + level_t*163);
+//	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 1818 + level_t*81);
+	TIM1->ARR = cycle;
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4,duty);
+/*	if(level==6)
+	{
+		TIM1->ARR = 1999;
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 1000);
+	}
+	else if(level==5)
+	{
+		TIM1->ARR = 2999;
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 1500);
+	}
+	else if(level==4)
+	{
+		TIM1->ARR = 3999;
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 2000);
+	}
+	else if(level==3)
+	{
+		TIM1->ARR = 4999;
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 2500);
+	}
+	else if(level==2)
+	{
+		TIM1->ARR = 5999;
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 3000);
+	}
+	else if(level==1)
+	{
+		TIM1->ARR = 19999;
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 10000);
+	}	*/
+}
+
+uint32_t fan_read()
+{
+	uint32_t speed_t;
+	HAL_TIM_IC_Start_IT(&htim5, TIM_CHANNEL_1);
+	HAL_Delay(1);
+	while(value1==-1)
+	{
+	}
+	speed_t = 4000000/value1;
+	HAL_TIM_IC_Stop_IT(&htim5, TIM_CHANNEL_1);
+	if((speed_t >0)&&(speed_t < 2001))
+			return speed_t;
+		else return 0;
+}
+
 
 uint32_t xiaomi_fan_read(void){
 	HAL_TIM_IC_Start_IT(&htim5, TIM_CHANNEL_1);
@@ -194,6 +307,255 @@ uint32_t xiaomi_fan_read(void){
 	printf("capture speed %u\r\n", cap_speed);
 	return cap_speed;
 }
+
+void Get_Json_login(void* message){
+
+	enum { MAX_FIELDS = 4 };
+	json_t pool[ MAX_FIELDS ];
+
+	 json_t const* parent = json_create( message, pool, MAX_FIELDS );
+	 if ( parent == NULL )
+		 printf("Nothing in payload\r\n");
+	 json_t const* namefield = json_getProperty( parent, "user_name" );
+	 if ( namefield == NULL )
+		 printf("user_name is not exist in payload\r\n");
+	 if ( json_getType( namefield ) != JSON_TEXT )
+		 printf("Value is wrong\r\n");
+	 json_t const* passfield = json_getProperty( parent, "password" );
+	 if ( passfield == NULL )
+		 printf("password is not exist in payload\r\n");
+	 if ( json_getType( passfield ) != JSON_TEXT )
+		 printf("Value is wrong\r\n");
+	 json_t const* sessionField = json_getProperty( parent, "session_id" );
+	 if ( sessionField == NULL )
+		 printf("password is not exist in payload\r\n");
+	 if (json_getType( sessionField ) != JSON_TEXT )
+		 printf("Value is wrong\r\n");
+	 char const* namevalue = json_getValue( namefield );
+	 char const* passvalue = json_getValue( passfield );
+	 char const* sessionID = json_getValue(sessionField);
+	 printf( "%s%s%s", passvalue, namevalue, "'.\n" );
+	 /*if(!strncmp(namevalue,username_Login,strlen(username_Login) ) && strncmp(passvalue,password_Login,strlen(password_Login))){
+		 publish(MESSAGE_LOGIN_SUCCESS, REPONSE_LOGIN);
+	 } else {
+		 publish(MESSAGE_LOGIN_FAIL,REPONSE_LOGIN);
+	 }*/
+	 /* Subcribe topic */
+}
+
+void Get_Json_changepass(void* message){
+
+	enum { MAX_FIELDS = 4 };
+	json_t pool[ MAX_FIELDS ];
+
+	json_t const* parent = json_create( message, pool, MAX_FIELDS );
+	if ( parent == NULL )
+		printf("Nothing in payload\r\n");
+	json_t const* namefield = json_getProperty( parent, "user_name" );
+	if ( namefield == NULL )
+		printf("Nothing in payload\r\n");
+	if ( json_getType( namefield ) != JSON_TEXT )
+		printf("Nothing in payload\r\n");
+	json_t const* old_passfield = json_getProperty( parent, "old_password" );
+	if ( old_passfield == NULL )
+		printf("Nothing in payload\r\n");
+	if ( json_getType( old_passfield ) != JSON_TEXT )
+		printf("Nothing in payload\r\n");
+	json_t const* new_passfield = json_getProperty( parent, "new_password" );
+	if ( new_passfield == NULL )
+		printf("Nothing in payload\r\n");
+	if ( json_getType( new_passfield ) != JSON_TEXT )
+		printf("Nothing in payload\r\n");
+	char const* namevalue = json_getValue( namefield );
+	char const* old_passvalue = json_getValue( old_passfield );
+	char const* new_passvalue = json_getValue( new_passfield);
+	printf( "%s%s%s%s", old_passvalue, new_passvalue, namevalue, "'.\n" );
+	if(!strncmp(namevalue,username_Login,strlen(username_Login) ) && strncmp(old_passvalue,password_Login,strlen(password_Login))){
+		publish(CHANGE_PASSWORD_SUCCESS ,REPONSE_CHANGE_PASSWORD);
+	} else {
+		publish(CHANGE_PASSWORD_FAIL ,REPONSE_CHANGE_PASSWORD);
+	}
+}
+
+void Get_Json_collect_air_quality(void* message){
+	//
+}
+
+void Get_Json_control(void* message){
+
+	enum { MAX_FIELDS = 4 };
+	json_t pool[ MAX_FIELDS ];
+
+	json_t const* parent = json_create( message, pool, MAX_FIELDS );
+	json_t const* modefield = json_getProperty( parent, "mode" );
+	if(modefield != NULL){
+		char const* modevalue = json_getValue( modefield );
+		printf("mode value %s\r\n", modevalue);
+		if(!strncmp(modevalue,"auto",strlen("auto"))){
+			sys_mode = AUTO_MODE;
+			publish(state_newver,REPONSE_CONTROL_STATE);
+		}
+		else if(!strncmp(modevalue,"fresh_air",strlen("fresh_air"))){
+			vanst = DAMPER_OUT;
+
+			sys_mode = FRESH_MODE;
+			publish(state_newver,REPONSE_CONTROL_STATE);
+		}
+		else if(!strncmp(modevalue,"indoor",strlen("indoor"))){
+			vanst = DAMPER_IN;
+
+			sys_mode = INDOOR_MODE;
+			publish(state_newver, REPONSE_CONTROL_STATE);
+
+		}
+		else if(!strncmp(modevalue,"night_mode",strlen("night_mode"))){
+			fan_speed = LOW_SPEED;
+			//xiaomi_fan_run(LOW_SPEED);
+
+			sys_mode = NIGHT_MODE;
+			publish(state_newver, REPONSE_CONTROL_STATE);
+
+		}
+	}
+	json_t const* ionfield = json_getProperty( parent, "ion" );
+	if(ionfield != NULL){
+		char const* ionvalue = json_getValue(ionfield);
+		if(!strncmp(ionvalue,"on",strlen("on"))){
+			ion_state = ST_ON;
+			setIONState(ST_ON);
+			publish(state_newver, REPONSE_CONTROL_STATE);
+
+		}
+		else if(!strncmp(ionvalue,"off",strlen("off"))){
+			ion_state = ST_OFF;
+			setIONState(ST_OFF);
+
+			publish(state_newver, REPONSE_CONTROL_STATE);
+		}
+
+	}
+	json_t const* speedfield = json_getProperty( parent, "speed" );
+	if(speedfield != NULL){
+		char const* speedvalue = json_getValue(speedfield);
+		if(!strncmp(speedvalue,"0",strlen("0"))){
+			//xiaomi_fan_stop();
+
+			fan_speed = STOP_SPEED;
+			vanst = DAMPER_CLOSE;
+			publish(state_newver, REPONSE_CONTROL_STATE);
+
+		}
+		else if(!strncmp(speedvalue,"1",strlen("1"))){
+			fan_speed = LOW_SPEED;
+			//xiaomi_fan_run(LOW_SPEED);
+
+			publish(state_newver, REPONSE_CONTROL_STATE);
+
+		}
+		else if(!strncmp(speedvalue,"2",strlen("2"))){
+			fan_speed = MED_SPEED;
+			//xiaomi_fan_run(MED_SPEED);
+
+			publish(state_newver, REPONSE_CONTROL_STATE);
+
+		}
+		else if(!strncmp(speedvalue,"3",strlen("3"))){
+			fan_speed = HIGH_SPEED;
+			//xiaomi_fan_run(HIGH_SPEED);
+
+			publish(state_newver, REPONSE_CONTROL_STATE);
+		}
+
+	}
+	json_t const* speedTfield = json_getProperty( parent, "speedTest" );
+		if(speedTfield != NULL){
+			char const* speedTValue = json_getValue(speedTfield);
+			printf("speed Test value %s\r\n", speedTValue);
+			uint16_t speed_test = atoi(speedTValue);
+			if(speed_test){
+				fan_run(speed_test);
+			}
+		}
+
+}
+
+void receive_handler_collect(MessageData* rx_msg){
+
+	char* topic = rx_msg->topicName->lenstring.data;
+	printf("receive mqtt topic %s\r\n", topic);
+	char *message = rx_msg->message->payload;
+	message[rx_msg->message->payloadlen] = '\0';
+
+	printf("receive mqtt %s %d\r\n", rx_msg->message->payload, rx_msg->message->payloadlen);
+	 if (!strncmp(topic,TOPIC_GET_AIR_QUALITY, strlen(TOPIC_GET_AIR_QUALITY))){
+			publish(AQI_newver, REPONSE_GET_AIR_QUALITY);
+	 }
+	 else if (!strncmp(topic,TOPIC_GET_CONTROL_STATE, strlen(TOPIC_GET_CONTROL_STATE))){
+			publish(state_newver,REPONSE_GET_STATE);
+	}
+
+
+}
+
+void receive_handler_login(MessageData* rx_msg){
+
+	char* topic = rx_msg->topicName->lenstring.data;
+	printf("receive mqtt topic %s\r\n", topic);
+	char *message = rx_msg->message->payload;
+	message[rx_msg->message->payloadlen] = '\0';
+	printf("receive mqtt %s %d\r\n", rx_msg->message->payload, rx_msg->message->payloadlen);
+
+	if (!strncmp(topic,TOPIC_LOGIN, strlen(TOPIC_LOGIN))){
+
+		Get_Json_login(rx_msg->message->payload);
+		// su dung parse json de lay user_name and password
+		//publsih thong tin tai khoan
+	}
+	if (!strncmp(topic,TOPIC_CHANGE_PASSWORD, strlen(TOPIC_CHANGE_PASSWORD))){
+		Get_Json_changepass(rx_msg->message->payload);
+		// su dung parse json de lay truong old_password, new_password
+		// publish lai success hoac fail
+	}
+}
+
+void receive_handler_control(MessageData* rx_msg){
+
+	char* topic = rx_msg->topicName->lenstring.data;
+	printf("receive mqtt topic %s\r\n", topic);
+	char *message = rx_msg->message->payload;
+	message[rx_msg->message->payloadlen] = '\0';
+	printf("receive mqtt %s %d\r\n", rx_msg->message->payload, rx_msg->message->payloadlen);
+
+	if (!strncmp(topic,TOPIC_REQUEST_CONTROL_MODE, strlen(TOPIC_REQUEST_CONTROL_MODE))){
+
+		// sử dụng parse json de lay gia trị các trư�?ng nếu buffer khác 0 thì xét để đi�?u khiển trạng thái
+		Get_Json_control(rx_msg->message->payload);
+	}
+
+	if (!strncmp(topic,TOPIC_REQUEST_ALERT, strlen(TOPIC_REQUEST_ALERT))){
+
+		//publish phản hồi v�? Alert
+	}
+
+}
+
+// Subcribse Mqtt ver mới
+
+void Subcribes_MQTT_New(void){
+
+	MQTTSubscribe(&client, TOPIC_LOGIN , QOS0, receive_handler_login);
+	HAL_Delay(100);
+	MQTTSubscribe(&client, TOPIC_CHANGE_PASSWORD  , QOS0, receive_handler_login);
+	HAL_Delay(100);
+	MQTTSubscribe(&client, TOPIC_GET_AIR_QUALITY  , QOS0, receive_handler_collect);
+	HAL_Delay(100);
+	MQTTSubscribe(&client, TOPIC_GET_CONTROL_STATE , QOS0, receive_handler_collect);
+	HAL_Delay(100);
+	MQTTSubscribe(&client, TOPIC_REQUEST_CONTROL_MODE , QOS0, receive_handler_control);
+	HAL_Delay(100);
+	MQTTSubscribe(&client, TOPIC_REQUEST_ALERT , QOS0, receive_handler_control);
+}
+
 
 void setUVState(uint8_t state){
 	HAL_GPIO_WritePin(UV_GPIO_Port, UV_Pin, state);
@@ -223,6 +585,43 @@ static void updateAirAQI(void){
 	tmpInthu2 = trunc(tmpH * 100);
 
 	sprintf(airAQI,"%d.%d-%d.%d-%d-%d-%d",tmpIntte1,tmpIntte2,tmpInthu1,tmpInthu2,pm2_5, co2_ppm, tvoc_ppb);
+	sprintf(AQI_newver,"{\"temp\":\"%d.%d\",\"rh\":\"%d.%d\",\"pm25\":\"%d\",\"co2\":\"%d\",\"tvoc\":\"%d\",\"pm1\":\"%d\",\"pm10\":\"%d\",\"aq\":\"good\"}", tmpIntte1, tmpIntte2,tmpInthu1,tmpInthu2, pm2_5, co2_ppm, tvoc_ppb, pm1_0, pm10);
+}
+
+void sysMode2Str(char *mode_str){
+	if(sys_mode == AUTO_MODE){
+		sprintf(mode_str, "auto");
+	}else if(sys_mode == FRESH_MODE){
+		sprintf(mode_str, "fresh_air");
+	}else if(sys_mode == INDOOR_MODE){
+		sprintf(mode_str, "indoor");
+	}else if(sys_mode == NIGHT_MODE){
+		sprintf(mode_str, "night_mode");
+	}
+}
+
+void ion2Str(char *ion_str){
+	if (ion_state == ST_OFF){
+		sprintf(ion_str,"off");
+	}
+	else {
+		sprintf(ion_str,"on");
+	}
+}
+
+void speed2Str(char *speed_str){
+	if (fan_speed == STOP_SPEED){
+		sprintf(speed_str,"0");
+		}
+	else if (fan_speed == LOW_SPEED) {
+		sprintf(speed_str,"1");
+	}
+	else if (fan_speed == MED_SPEED) {
+		sprintf(speed_str,"2");
+	}
+	else {
+		sprintf(speed_str,"3");
+	}
 }
 
 void updateControlState(void){
@@ -233,6 +632,7 @@ void updateControlState(void){
 	char control[7];
 	char uv[4];
 	char ion[4];
+	char mode_str[10] = {0};
 	if (power == ST_OFF){
 		sprintf(powerc,"OFF");
 	}
@@ -284,8 +684,18 @@ void updateControlState(void){
 	else {
 		sprintf(ion,"on");
 	}
-	sprintf(controlState,"%s-%s-%s-%s-%s-%s-%s",powerc,speedc,night,filter,control,uv,ion);
 
+	if(sys_mode == AUTO_MODE){
+		sprintf(mode_str, "auto");
+	}else if(sys_mode == FRESH_MODE){
+		sprintf(mode_str, "fresh_air");
+	}else if(sys_mode == INDOOR_MODE){
+		sprintf(mode_str, "indoor");
+	}else if(sys_mode == NIGHT_MODE){
+		sprintf(mode_str, "night_mode");
+	}
+	sprintf(controlState,"%s-%s-%s-%s-%s-%s-%s",powerc,speedc,night,filter,control,uv,ion);
+	sprintf(state_newver,"{\"speed\":\"%s\",\"mode\":\"%s\",\"ion\":\"%s\"}",speedc, mode_str , ion );
 }
 
 void init_MQTT(void){
@@ -340,7 +750,62 @@ void init_MQTT(void){
 
 }
 
-static int publish(void* payload, void* topic)
+void init_MQTT_New(void){
+	int ret;
+	uint8_t rxbuf[128];
+	HAL_UART_Receive(&huart1, rxbuf, sizeof(rxbuf), 1000);
+	if(setCmdMode("machine") < 0){
+		printf("set cmd failed\r\n");
+	}
+
+	data.MQTTVersion = 4;
+	data.clientID.cstring = MQTT_CLIENT_ID;
+	//data.username.cstring = MQTT_USER_N;
+	//data.password.cstring = MQTT_PASSWORD_N;
+	data.keepAliveInterval = 10;
+	HAL_Delay(100);
+	if(setupNetwork(SSID_WIFI, PASS_WIFI)){
+	  printf("setup network failed\r\n");
+	}
+	HAL_Delay(100);
+	printf("init network\r\n");
+	if(NetworkInit(&network))
+	  printf("init failed\r\n");
+	else
+	  printf("network up\r\n");
+	HAL_Delay(100);
+	ret = isTCPPortOpen();
+	if(ret >= 0){
+		closeTCPPort(ret);
+	}
+	HAL_Delay(100);
+	ret = NetworkConnect(&network, MQTT_HOST_N, MQTT_PORT_N);
+	if(ret == FAILURE)
+	{
+	  // error, return
+	  printf("network connect tcp failed\r\n");
+	  return ret;
+	}
+
+	printf("network connect tcp success\r\n");
+	HAL_Delay(100);
+
+	MQTTClientInit(&client, &network, 10000, send_buf, sizeof(send_buf), recv_buf, sizeof(recv_buf));
+
+	ret = MQTTConnect(&client, &data);
+	if(ret != SUCCESS)
+	{
+	  // error, return
+	  printf("failed to connect mqtt\r\n");
+	  NetworkDisconnect(&network);
+	  return ret;
+	}
+	printf("success to connect mqtt\r\n");
+
+}
+
+
+int publish(void* payload, void* topic)
 {
     MQTTMessage message;
     int rc;
@@ -504,6 +969,192 @@ void subcribesMQTT(void){
 	printf("finish subcribe\r\n");
 }
 
+void Control_IR(void){
+
+	 if (power == ST_ON && flagSW == 1){
+
+		  fan_speed = MED_SPEED;
+		  xiaomi_fan_run(MED_SPEED);
+		  flagSW = 0;
+	  }
+	  else if (power == ST_OFF && flagSW == 1) {
+
+		  fan_speed = 0;
+		  xiaomi_fan_stop();
+		  flagSW = 0;
+	  }
+	  if (fan_speed == LOW_SPEED && flagSP == 1 && power == ST_ON){
+
+		  xiaomi_fan_run(LOW_SPEED);
+		  flagSP = 0;
+	  }
+	  else if (fan_speed == MED_SPEED && flagSP == 1 && power == ST_ON){
+
+		  xiaomi_fan_run(MED_SPEED);
+		  flagSP = 0;
+	  }
+	  else if (fan_speed == HIGH_SPEED && flagSP == 1 && power == ST_ON){
+
+		  xiaomi_fan_run(HIGH_SPEED);
+		  flagSP = 0;
+	  }
+	  if (sys_mode == FRESH_MODE && flagMode == 1 && power == ST_ON){
+		  vanst = DAMPER_OUT;
+		  flagMode = 0;
+	  }
+	  else if (sys_mode == INDOOR_MODE && flagMode == 1 && power == ST_ON){
+		  vanst = DAMPER_IN;
+		  flagMode = 0;
+	  }
+	  else if (sys_mode == NIGHT_MODE && flagMode == 1 && power == ST_ON){
+		   fan_speed = LOW_SPEED;
+		    xiaomi_fan_run(LOW_SPEED);
+			flagMode = 0;
+
+	  }
+	  if (ion_state == ST_ON && flagIon == 1 && power == ST_ON){
+		  setIONState(ST_ON);
+		  flagIon = 0;
+	  }
+	  else if (ion_state == ST_OFF && flagIon == 1 && power == ST_ON) {
+		  setIONState(ST_OFF);
+		  flagIon = 0;
+	  }
+}
+
+void Receive_IR(void){
+
+
+		if(my_decode(&results)) {
+			snprintf(trans_str, 96, "Cod: %p | Type: %s | Bits: %d\n", (void*)results.value, decode_str[results.decode_type + 1], results.bits);
+			HAL_UART_Transmit(&huart2, (uint8_t*)&trans_str, sizeof(trans_str), 100);
+
+			if ((void*)results.value == 0xffb04f ){
+				power++;
+				flagSW = 1;
+				if (power == 2){
+					power = 0;
+				}
+			}
+			if ((void*)results.value == 0xff22dd ){
+				fan_speed++;
+				flagSP = 1;
+				if (fan_speed == 4){
+					fan_speed = 1;
+				}
+			}
+			if ((void*)results.value == 0xff7887 ){
+				sys_mode++;
+				flagMode = 1;
+				if (sys_mode == 5){
+					sys_mode = 1;
+				}
+			}
+			if ((void*)results.value == 0xff8877  ){
+				ion_state++;
+				flagIon = 1;
+				if (ion_state == 2){
+					ion_state = 0;
+				}
+			}
+			Control_IR();
+
+			my_resume();
+		}
+
+}
+
+void Check_button(void){
+	if (power == ST_OFF && flagPBT == 1){
+		flagPBT = 0;
+		fan_speed = MED_SPEED;
+		xiaomi_fan_run(MED_SPEED);
+
+	}
+	else if (power == ST_ON && flagPBT == 1){
+		flagPBT = 0;
+		fan_speed = 0;
+		xiaomi_fan_stop();
+
+	}
+	 if (fan_speed == LOW_SPEED && flagSBT == 1 && power == ST_ON){
+
+		  xiaomi_fan_run(LOW_SPEED);
+		  flagSBT = 0;
+	  }
+	  else if (fan_speed == MED_SPEED && flagSBT == 1 && power == ST_ON){
+
+		  xiaomi_fan_run(MED_SPEED);
+		  flagSBT = 0;
+	  }
+	  else if (fan_speed == HIGH_SPEED && flagSBT == 1 && power == ST_ON){
+
+		  xiaomi_fan_run(HIGH_SPEED);
+		  flagSBT = 0;
+	  }
+	  if (sys_mode == FRESH_MODE && flagMBT == 1 && power == ST_ON){
+		  vanst = DAMPER_OUT;
+		  flagMBT = 0;
+	  }
+	  else if (sys_mode == INDOOR_MODE && flagMode == 1 && power == ST_ON){
+		  vanst = DAMPER_IN;
+		  flagMBT = 0;
+	  }
+	  else if (sys_mode == NIGHT_MODE && flagMode == 1 && power == ST_ON){
+		   fan_speed = LOW_SPEED;
+		    xiaomi_fan_run(LOW_SPEED);
+			flagMBT = 0;
+
+	  }
+
+}
+
+void Check_long_button(void){
+
+	if (!HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_7)){
+		future = HAL_GetTick();
+
+	}
+	else {
+
+		nowb = HAL_GetTick();
+		if (nowb > (future + 4000) && power == ST_ON){
+			power = ST_OFF;
+			flagPBT = 1;
+			printf("turn off power \r\n");
+			future = HAL_GetTick();
+		}
+		else if (nowb > (future + 4000) && power == ST_OFF){
+			power = ST_ON;
+			flagPBT = 1;
+			printf("turn on power \r\n");
+			future = HAL_GetTick();
+		}
+	}
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+	uint8_t buff[10];
+	uint16_t cs, crc;
+	int i;
+  if(huart->Instance == USART2){
+	  HAL_UART_Transmit(&huart2, (uint8_t *)&Rx_data[0], 1, 0xFFFF);
+	  if(Rx_data[0] == 'h'){
+		  xiaomi_fan_run(HIGH_SPEED);
+	  }else if(Rx_data[0] == 'm'){
+		  xiaomi_fan_run(MED_SPEED);
+	  }else if(Rx_data[0] == 'l'){
+		  xiaomi_fan_run(LOW_SPEED);
+	  }else if(Rx_data[0] == 'r'){
+		  //cap_speed = fan_read();
+		  sprintf(buff, "%d\r\n", cap_speed);
+		  HAL_UART_Transmit(&huart2, (uint8_t *)&buff[0], 10, 0xFFFF);
+	  }
+	  HAL_UART_Receive_IT(&huart2, Rx_data, 1);
+  }
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -536,7 +1187,6 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART2_UART_Init();
-  MX_I2C1_Init();
   MX_I2C2_Init();
   MX_SPI2_Init();
   MX_SPI3_Init();
@@ -545,11 +1195,16 @@ int main(void)
   MX_TIM5_Init();
   MX_USART1_UART_Init();
   MX_USART6_UART_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
   //Slow down after init
   RINGBUF_Init(&RxUart2RingBuff, ring2_buff, BUFF_SIZE);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
+  HAL_TIM_IC_Stop_IT(&htim5, TIM_CHANNEL_1);
   HAL_Delay(100);
-
+  printf("start\r\n");
+  // Init IR
+  my_enableIRIn();
   night_mode = ST_OFF;
   fan_speed = LOW_SPEED;
   power = ST_ON;
@@ -557,11 +1212,16 @@ int main(void)
   filter_mode = FRESH;
   uv_state = ST_ON;
   ion_state = ST_OFF;
+  // For new app
+  sys_mode = AUTO_MODE;
   i2c_init_sensirion(&hi2c2);
-  xiaomi_fan_run(LOW_SPEED);
+
+  fan_run(70);
   /* Init MQTT */
-  init_MQTT();
-  subcribesMQTT();
+  init_MQTT_New();
+  Subcribes_MQTT_New();
+  //init_MQTT();
+  //subcribesMQTT();
   /* Init SVM */
   now = HAL_GetTick();
   end = now + TIMEOUT_SVM;
@@ -580,6 +1240,8 @@ int main(void)
 
   err = sgp30_iaq_init();
 
+  initSMUARTPort(&huart6);
+  setSMOutputMode(ASK_ANSWER); // Set SM to ask-answer mode
   HAL_UART_Receive_IT(&huart2, Rx_data, 1);
 
   /* USER CODE END 2 */
@@ -677,40 +1339,6 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-}
-
-/**
-  * @brief I2C1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_I2C1_Init(void)
-{
-
-  /* USER CODE BEGIN I2C1_Init 0 */
-
-  /* USER CODE END I2C1_Init 0 */
-
-  /* USER CODE BEGIN I2C1_Init 1 */
-
-  /* USER CODE END I2C1_Init 1 */
-  hi2c1.Instance = I2C1;
-  hi2c1.Init.ClockSpeed = 100000;
-  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
-  hi2c1.Init.OwnAddress1 = 0;
-  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
-  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
-  hi2c1.Init.OwnAddress2 = 0;
-  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
-  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
-  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN I2C1_Init 2 */
-
-  /* USER CODE END I2C1_Init 2 */
-
 }
 
 /**
@@ -957,6 +1585,51 @@ static void MX_TIM2_Init(void)
 }
 
 /**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 21000;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 50;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
+
+}
+
+/**
   * @brief TIM5 Initialization Function
   * @param None
   * @retval None
@@ -978,7 +1651,7 @@ static void MX_TIM5_Init(void)
   htim5.Instance = TIM5;
   htim5.Init.Prescaler = 20;
   htim5.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim5.Init.Period = 4999;
+  htim5.Init.Period = 50000;
   htim5.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim5.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim5) != HAL_OK)
@@ -1170,6 +1843,19 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(IR_RECEIVE_PIN_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pins : SPEED_BUTTON_Pin MODE_BUTTON_Pin */
+  GPIO_InitStruct.Pin = SPEED_BUTTON_Pin|MODE_BUTTON_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
 }
 
 /* USER CODE BEGIN 4 */
@@ -1209,18 +1895,45 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 void StartUpdateTask(void const * argument)
 {
   /* USER CODE BEGIN 5 */
+	int err;
+	amphenol_t SMAmp;
+	uint8_t SMAlarm;
   /* Infinite loop */
   for(;;)
   {
-	  getSVM30(&sensorSVM30data);
-	  tvoc_ppb = sensorSVM30data.tvoc_ppb;
-	  co2_ppm  = sensorSVM30data.co2_eq_ppm;
-	  temperature = sensorSVM30data.temperature;
-	  humidity = sensorSVM30data.humidity;
-
-	  //pm2_5 = amphenol.PM2p5_Standard;
+	  printf("Update task\r\n");
+	  err = getSVM30(&sensorSVM30data);
+	  if(err){
+		  printf("Failed to get SVM30 data\r\n");
+	  }else {
+		  tvoc_ppb = sensorSVM30data.tvoc_ppb;
+		  co2_ppm  = sensorSVM30data.co2_eq_ppm;
+		  temperature = sensorSVM30data.temperature;
+		  humidity = sensorSVM30data.humidity;
+	  }
+	  err = getSMData(&SMAmp, &SMAlarm);
+	  if(err){
+		  printf("Failed to get SM data\r\n");
+	  }
+	  pm2_5 = SMAmp.PM2p5_Environment;
+	  pm1_0 = SMAmp.PM1_Environment;
+	  pm10 = SMAmp.PM10_Environment;
 	  updateAirAQI();
 	  updateControlState();
+
+	  //Behavior when run auto mode.
+	  if(sys_mode == AUTO_MODE){
+		  if(co2_ppm < CO2_LEVEL_1){
+			  vanst = DAMPER_IN; // Turn on internal filter
+			  //xiaomi_fan_run(MED_SPEED);
+		  }else if(co2_ppm > CO2_LEVEL_1 && co2_ppm < CO2_LEVEL_2){
+			  vanst = DAMPER_OUT; // Turn on fresh supply
+			  //xiaomi_fan_run(LOW_SPEED);
+		  }else {
+			  vanst = DAMPER_OUT;
+			  //xiaomi_fan_run(HIGH_SPEED);
+		  }
+	  }
 
 	  if((vanst == DAMPER_OUT) && (vanst != preVanst)){
 		  directionOfRotation(DAMPER_OUT, true, 220);
@@ -1238,9 +1951,19 @@ void StartUpdateTask(void const * argument)
 		  preVanst = vanst;
 		  printf("close vanst\r\n");
 	  }
-	  printf("Update task\r\n");
-	  MQTTYield(&client, 500);
-	  osDelay(1);
+	  if(TimerIsExpired(&client.last_conn_timer)){
+		  printf("loss connect mqtt\r\n");
+		  if(!isTCPPortOpen()){
+			  printf("TCP port was closed by some reason\r\n");
+		  }
+		  if(checkNetworkStatus() != NET_UP){
+			  printf("Loss wifi connection\r\n");
+		  }
+	  }else {
+		  MQTTYield(&client, 300);
+	  }
+
+	  osDelay(100);
   }
   /* USER CODE END 5 */ 
 }
@@ -1260,8 +1983,10 @@ void StartIR_Task(void const * argument)
   for(;;)
   {
 	  i++;
+	  Receive_IR();
+	  Check_long_button();
+	  Check_button();
 	  //getSVM30(&sensorSVM30data);
-	  printf("IR task\r\n");
 	  osDelay(100);
   }
   /* USER CODE END StartIR_Task */
@@ -1283,7 +2008,6 @@ void StartDisplayTask(void const * argument)
   {
 	  i++;
 	  //getSVM30(&sensorSVM30data);
-	  printf("Display task\r\n");
 	  osDelay(100);
   }
   /* USER CODE END StartDisplayTask */
@@ -1329,6 +2053,39 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     HAL_IncTick();
   }
   /* USER CODE BEGIN Callback 1 */
+    user_TIM_PeriodElapsedCallback(htim);
+
+	if(htim->Instance == TIM3){
+		if(HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_6) == GPIO_PIN_SET){
+			//if (power == ST_ON ){
+			fan_speed++;
+			flagSBT = 1;
+			printf("nhan button PB6 \r\n");
+			if (fan_speed == 4){
+				fan_speed = 1;
+			}
+			state1 = 1;
+			HAL_GPIO_TogglePin(GPIOA,GPIO_PIN_5);
+			HAL_TIM_Base_Stop_IT(&htim3);
+
+			//}
+		}
+		if(HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_7) == GPIO_PIN_SET){
+		//if (power == ST_ON && button2 == 1){
+			sys_mode++;
+			printf("nhan button PB7 \r\n");
+			flagMBT = 1;
+			if (sys_mode == 5){
+				sys_mode = 1;
+			}
+			state2 = 1;
+			//button2 =0;
+			HAL_GPIO_TogglePin(GPIOA,GPIO_PIN_5);
+			HAL_TIM_Base_Stop_IT(&htim3);
+		//}
+		}
+
+	}
 
   /* USER CODE END Callback 1 */
 }

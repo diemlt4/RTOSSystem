@@ -1,9 +1,0 @@
-shtc1.c:68:9:shtc1_sleep	8	static
-shtc1.c:72:9:shtc1_wake_up	8	static
-shtc1.c:76:9:shtc1_measure_blocking_read	24	static
-shtc1.c:88:9:shtc1_measure	8	static
-shtc1.c:92:9:shtc1_read	24	static
-shtc1.c:108:9:shtc1_probe	16	static
-shtc1.c:115:6:shtc1_enable_low_power_mode	16	static
-shtc1.c:120:9:shtc1_read_serial	32	static
-shtc1.c:154:9:shtc1_get_configured_address	4	static

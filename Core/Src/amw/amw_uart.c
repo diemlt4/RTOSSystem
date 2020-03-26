@@ -95,6 +95,7 @@ int OsWrapper_read(Network* n, unsigned char* buffer, int len, int timeout_ms)
     TickType_t xTicksToWait = timeout_ms / portTICK_PERIOD_MS; /* convert milliseconds to ticks */
     TimeOut_t xTimeOut;
     size_t command_len;
+    int rev = 0;
     int i;
     vTaskSetTimeOutState(&xTimeOut); /* Record the time at which this function was entered. */
 #ifdef BUS_COMMAND_MODE
@@ -103,10 +104,13 @@ int OsWrapper_read(Network* n, unsigned char* buffer, int len, int timeout_ms)
         sprintf((char*)uart_command, "read %u %u\r\n", n->my_socket, len - bytes);
         command_len = strlen((char*)uart_command);
         HAL_UART_Transmit(amw_uart, uart_command, command_len, 0xFFFF);
+        rev = getCmdResponse(buffer+bytes);
+        if(rev >= 0)
+        	bytes += rev;
+        else break;
+        //bytes += getCmdResponse(buffer+bytes);
 
-        bytes += getCmdResponse(buffer+bytes);
-
-        if(xTaskCheckForTimeOut(&xTimeOut, &xTicksToWait) == pdTRUE)   // Timeout
+        if((rev == 0) && (xTaskCheckForTimeOut(&xTimeOut, &xTicksToWait) == pdTRUE))   // Timeout
         {
             break;
         }
@@ -346,3 +350,44 @@ int isTCPPortOpen(){
     return 0;
 #endif
 }
+
+int getMACAddress(uint8_t *mac){
+#ifdef BUS_COMMAND_MODE
+    size_t command_len;
+    command_len = strlen("get wlan.mac\r\n");
+
+    HAL_UART_Transmit(amw_uart, "get wlan.mac\r\n", command_len, 100);
+    // cleanup ZentriOS response
+    return getCmdResponse(mac);
+#else
+    return 0;
+#endif
+}
+
+int getAMWUUID(uint8_t *uuid){
+#ifdef BUS_COMMAND_MODE
+    size_t command_len;
+    command_len = strlen("get sy u\r\n");
+
+    HAL_UART_Transmit(amw_uart, "get sy u\r\n", command_len, 100);
+    // cleanup ZentriOS response
+    return getCmdResponse(uuid);
+#else
+    return 0;
+#endif
+}
+
+int setAutoJoinWifi(void){
+#ifdef BUS_COMMAND_MODE
+    size_t command_len;
+    unsigned char read_buf[128] = { 0 };
+    command_len = strlen("set wl o e true\r\n");
+
+    HAL_UART_Transmit(amw_uart, "set wl o e true\r\n", command_len, 100);
+    // cleanup ZentriOS response
+    return getCmdResponse(read_buf);
+#else
+    return 0;
+#endif
+}
+

@@ -69,6 +69,7 @@ void MQTTClientInit(MQTTClient* c, Network* network, unsigned int command_timeou
     c->defaultMessageHandler = NULL;
 	c->next_packetid = 1;
     TimerInit(&c->ping_timer);
+    TimerInit(&c->last_conn_timer);
 #if defined(MQTT_TASK)
 	MutexInit(&c->mutex);
 #endif
@@ -206,7 +207,6 @@ int keepalive(MQTTClient* c)
         rc = SUCCESS;
         goto exit;
     }
-
     if (TimerIsExpired(&c->ping_timer))
     {
         if (!c->ping_outstanding)
@@ -218,6 +218,7 @@ int keepalive(MQTTClient* c)
             if (len > 0 && (rc = sendPacket(c, len, &timer)) == SUCCESS){ // send the ping packet
                 c->ping_outstanding = 1;
                 printf("send ping request\r\n");
+                TimerCountdown(&c->last_conn_timer, 4);
             }
         }
     }
@@ -239,12 +240,14 @@ int cycle(MQTTClient* c, Timer* timer)
         case CONNACK:
         case PUBACK:
         case SUBACK:
+        	TimerCountdown(&c->last_conn_timer, c->keepAliveInterval);
             break;
         case PUBLISH:
         {
             MQTTString topicName;
             MQTTMessage msg;
             int intQoS;
+            TimerCountdown(&c->last_conn_timer, c->keepAliveInterval);
             if (MQTTDeserialize_publish(&msg.dup, &intQoS, &msg.retained, &msg.id, &topicName,
                (unsigned char**)&msg.payload, (int*)&msg.payloadlen, c->readbuf, c->readbuf_size) != 1){
             	printf("MQTTDeserialize_publish failed\r\n");
@@ -272,6 +275,7 @@ int cycle(MQTTClient* c, Timer* timer)
         {
             unsigned short mypacketid;
             unsigned char dup, type;
+            TimerCountdown(&c->last_conn_timer, c->keepAliveInterval);
             if (MQTTDeserialize_ack(&type, &dup, &mypacketid, c->readbuf, c->readbuf_size) != 1)
                 rc = FAILURE;
             else if ((len = MQTTSerialize_ack(c->buf, c->buf_size, PUBREL, 0, mypacketid)) <= 0)
@@ -283,8 +287,10 @@ int cycle(MQTTClient* c, Timer* timer)
             break;
         }
         case PUBCOMP:
+        	TimerCountdown(&c->last_conn_timer, c->keepAliveInterval);
             break;
         case PINGRESP:
+        	TimerCountdown(&c->last_conn_timer, c->keepAliveInterval);
             c->ping_outstanding = 0;
             printf("get ping response\r\n");
             break;

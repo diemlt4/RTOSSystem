@@ -44,8 +44,9 @@ extern "C" {
 #define delayTime 2
 
 enum damper_type{
+	DAMPER_CLOSE,
 	DAMPER_IN,
-	DAMPER_OUT
+	DAMPER_OUT,
 };
 
 void directionOfRotation(int damper, bool direction, int degree);

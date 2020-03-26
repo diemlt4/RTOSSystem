@@ -13,7 +13,7 @@ extern UART_HandleTypeDef huart2;
 UART_HandleTypeDef *huart_sm_uart_04l;
 static uint8_t rxBuffer[32];
 extern uint8_t Rx_data[2];
-amphenol amphenol1;
+amphenol_t amphenol1;
 
 uint16_t crc(const uint8_t *data, uint32_t length){
 
@@ -31,47 +31,109 @@ void startToRevSM04L(void) {
 
 }
 
+void initSMUARTPort(UART_HandleTypeDef *huart_handler) {
+	huart_sm_uart_04l = huart_handler;
+	uint8_t rxbuf[100] = {0};
+	// Clear RX buffer
+	HAL_UART_Receive(huart_sm_uart_04l, rxbuf, 100, 1000);
+}
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
-  /* Prevent unused argument(s) compilation warning */
-  /* NOTE: This function should not be modified, when the callback is needed,
-           the HAL_UART_RxCpltCallback could be implemented in the user file
-   */
-	uint32_t speed;
-	uint8_t str[50];
-  if (huart->Instance == USART6) {
-	if ( rxBuffer[0] == 'B' && rxBuffer[1] == 'M') {
-
-	  amphenol1.PM1_Standard = rxBuffer[4]*256 + rxBuffer[5];
-	  amphenol1.PM2p5_Standard = rxBuffer[6]*256 + rxBuffer[7];
-	  amphenol1.PM10_Standard = rxBuffer[8]*256 + rxBuffer[9];
-
-	  amphenol1.PM1_Environment = rxBuffer[10]*256 + rxBuffer[11];
-	  amphenol1.PM2p5_Environment = rxBuffer[12]*256 + rxBuffer[13];
-	  amphenol1.PM10_Environment = rxBuffer[14]*256 + rxBuffer[15];
-	  printf("finish get pm2.5\r\n");
+int setSMOutputMode(int mode){
+	uint8_t txbuf[7];
+	uint8_t rxbuf[10] = {0};
+	uint16_t crc= 0;
+	uint16_t cs = 0;
+	int i = 0;
+	txbuf[0] = 0x42;
+	txbuf[1] = 0x4D;
+	txbuf[2] = 0xE1; // CMD
+	txbuf[3] = 0; //DATA_H
+	txbuf[4] = mode*0xff; //DATA_L
+	for(i = 0; i < 5; i++){
+		crc += txbuf[i];
 	}
-
-	for (int i = 0; i<32 ; i++) {
-	  rxBuffer[i] = 0;
+	txbuf[5] = crc >> 8;
+	txbuf[6] = crc & 0xff;
+	HAL_UART_Transmit(huart_sm_uart_04l, txbuf, 7, 0xFFFF);
+	HAL_UART_Receive(huart_sm_uart_04l, rxbuf, 8, 5000);
+	crc = (rxbuf[6] << 8)| rxbuf[7];
+	for(i = 0; i < 8; i++){
+		printf("0x%02x ", rxbuf[i]);
 	}
-	HAL_UART_DMAStop(huart_sm_uart_04l);
-  }
-  if(huart->Instance == USART2){
-	  HAL_UART_Transmit(&huart2, (uint8_t *)&Rx_data[0], 1, 0xFFFF);
-	  if(Rx_data[0] == 'h'){
-		  xiaomi_fan_run(HIGH_SPEED);
-	  }else if(Rx_data[0] == 'm'){
-		  xiaomi_fan_run(MED_SPEED);
-	  }else if(Rx_data[0] == 'l'){
-		  xiaomi_fan_run(LOW_SPEED);
-	  }else if(Rx_data[0] == 'r'){
-		  speed = xiaomi_fan_read();
-		  sprintf(str, "speed %u\r\n", speed);
-		  HAL_UART_Transmit(&huart2, str, strlen(str), 0xFFFF);
-	  }
-	  HAL_UART_Receive_IT(&huart2, Rx_data, 1);
-  }
+	for(i = 0; i < 6; i++){
+		cs += rxbuf[i];
+	}
+	printf("\r\n");
+	return (cs == crc);
+}
+
+int setSMStandbyControl(int mode){
+	uint8_t txbuf[7];
+	uint8_t rxbuf[10] = {0};
+	uint16_t crc= 0;
+	uint16_t cs = 0;
+	int i = 0;
+	txbuf[0] = 0x42;
+	txbuf[1] = 0x4D;
+	txbuf[2] = 0xE4; // CMD
+	txbuf[3] = 0; //DATA_H
+	txbuf[4] = mode*0xff; //DATA_L
+	for(i = 0; i < 5; i++){
+		crc += txbuf[i];
+	}
+	txbuf[5] = crc >> 8;
+	txbuf[6] = crc & 0xff;
+	HAL_UART_Transmit(huart_sm_uart_04l, txbuf, 7, 0xFFFF);
+	HAL_UART_Receive(huart_sm_uart_04l, rxbuf, 8, 5000);
+	crc = (rxbuf[6] << 8)| rxbuf[7];
+	for(i = 0; i < 8; i++){
+		printf("0x%02x ", rxbuf[i]);
+	}
+	for(i = 0; i < 6; i++){
+		cs += rxbuf[i];
+	}
+	printf("\r\n");
+	return (cs == crc);
+}
+
+uint8_t getSMData(amphenol_t *amp, uint8_t *alarm){
+	uint8_t txbuf[7];
+	uint8_t rxbuf[32] = {0};
+	uint16_t crc= 0;
+	uint16_t cs = 0;
+	uint8_t ret;
+	int i = 0;
+	txbuf[0] = 0x42;
+	txbuf[1] = 0x4D;
+	txbuf[2] = 0xE2; // CMD
+	txbuf[3] = 0; //DATA_H
+	txbuf[4] = 0; //DATA_L
+	for(i = 0; i < 5; i++){
+		crc += txbuf[i];
+	}
+	txbuf[5] = crc >> 8;
+	txbuf[6] = crc & 0xff;
+	HAL_UART_Transmit(huart_sm_uart_04l, txbuf, 7, 0xFFFF);
+	ret = HAL_UART_Receive(huart_sm_uart_04l, rxbuf, 32, 10000);
+	if(ret != HAL_OK){
+		return ret;
+	}
+	crc = (rxbuf[30] << 8)| rxbuf[31];
+	//Check sum
+	for(i = 0; i < 30; i++){
+		cs += rxbuf[i];
+	}
+	if ( rxbuf[0] == 'B' && rxbuf[1] == 'M' && cs == crc) {
+		amp->PM1_Standard = rxbuf[4]*256 + rxbuf[5];
+		amp->PM2p5_Standard = rxbuf[6]*256 + rxbuf[7];
+		amp->PM10_Standard = rxbuf[8]*256 + rxbuf[9];
+
+		amp->PM1_Environment = rxbuf[10]*256 + rxbuf[11];
+		amp->PM2p5_Environment = rxbuf[12]*256 + rxbuf[13];
+		amp->PM10_Environment = rxbuf[14]*256 + rxbuf[15];
+		*alarm = rxbuf[29];
+		return 0;
+	}
+	return -1;
 }
 

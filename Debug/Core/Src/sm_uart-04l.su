@@ -1,4 +1,0 @@
-sm_uart-04l.c:18:10:crc	16	static
-sm_uart-04l.c:22:6:SM_UART_04L_Init	16	static
-sm_uart-04l.c:28:6:startToRevSM04L	8	static
-sm_uart-04l.c:35:6:HAL_UART_RxCpltCallback	80	static

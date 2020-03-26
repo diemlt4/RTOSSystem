@@ -22,7 +22,8 @@
 #include "stm32f4xx.h"
 
 enum fan_speed_t{
-	LOW_SPEED = 1,
+	STOP_SPEED,
+	LOW_SPEED,
 	MED_SPEED,
 	HIGH_SPEED
 };
